@@ -12,24 +12,24 @@ pagesToVisit.push(START_URL);
 crawl();
 
 function crawl() {
-	var nextPage = pagesToVisit.pop();
+	var nextPage = pagesToVisit.shift();
 	if (nextPage != null) {
 		visitPage(nextPage);
-		// crawl();
 	}
 }
 
 
-function visitPage(listPage) {
-	console.log("Visiting list page " + listPage);
-	request(listPage, function(error, response, body) {
+function visitPage(pageUrl) {
+	console.log("Visiting page " + pageUrl);
+	request(pageUrl, function(error, response, body) {
 	   if(error) {
 	     console.log("Error: " + error);
-	     crawl();
+	     setTimeout(crawl, 3000);
 	   }
 	   // Check status code (200 is HTTP OK)
 	   console.log("Status code: " + response.statusCode);
 	   if(response.statusCode === 200) {
+	   	count++;
 	     // Parse the document body
 	     var $ = cheerio.load(body);
 
@@ -37,14 +37,13 @@ function visitPage(listPage) {
 	     collectDetailPageLink($);
 	     // crawl next page url
 	     collectPagingLink($);
-	     crawl();
+	     setTimeout(crawl, 3000);
 	   }
-	});
+	});	
 }
 
 function collectDetailPageLink($) {
 	var relativeLinks = $("a.mcr-gl-link");
-	console.log("Found " + relativeLinks.length + " detail links");
     relativeLinks.each(function() {
     	var urlToVisit = baseUrl + $(this).attr('href');
         console.log(urlToVisit);
@@ -54,7 +53,6 @@ function collectDetailPageLink($) {
 
 function collectPagingLink($) {
 	var pagingUrl = $("ul.pagination").find("a");
-	console.log("Found " + pagingUrl.length + " paging links");
     pagingUrl.each(function() {
     	var urlToVisit = $(this).attr('href');
     	if (!(pagesToVisit.indexOf(urlToVisit) > -1)) {

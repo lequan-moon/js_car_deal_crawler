@@ -3,10 +3,8 @@ var request = require('request');
 var cheerio = require('cheerio');
 var URL = require('url-parse');
 const mime = require('mime');
-const filePath = './photos/11346-chao-thit-heo.jpg';
-const uploadTo = 'a/1200px-Good_Food_Display_-_NCI_Visuals_Online.jpg';
-const fileMime = mime.getType(filePath);
 const bucketName = 'ad27cardeal-178019.appspot.com';
+const photoDir = './photos/';
 
 var admin = require("firebase-admin");
 
@@ -20,33 +18,50 @@ var app = admin.initializeApp({
 var mStorage = app.storage();
 var bucket = mStorage.bucket(bucketName);
 
+var mRealtimeDB = app.database();
+var dealRef = mRealtimeDB.ref("deals/bonbanh");
+
 var baseUrl = "https://bonbanh.com/"
 
 var pagesToVisit = [];
 var typeDetailPagesToVisit = [];
+var imageForUpload = [];
 
 // main process
-pagesToVisit.push(
-	"https://bonbanh.com/oto/page,1"
-	// "https://bonbanh.com/oto/page,2", 
-	// "https://bonbanh.com/oto/page,3", 
-	// "https://bonbanh.com/oto/page,4", 
-	// "https://bonbanh.com/oto/page,5", 
-	// "https://bonbanh.com/oto/page,6", 
-	// "https://bonbanh.com/oto/page,7", 
-	// "https://bonbanh.com/oto/page,8", 
-	// "https://bonbanh.com/oto/page,9", 
-	// "https://bonbanh.com/oto/page,10"
-	);
+// pagesToVisit.push(
+// 	"https://bonbanh.com/oto/page,1",
+// 	"https://bonbanh.com/oto/page,2", 
+// 	"https://bonbanh.com/oto/page,3", 
+// 	"https://bonbanh.com/oto/page,4", 
+// 	"https://bonbanh.com/oto/page,5", 
+// 	"https://bonbanh.com/oto/page,6", 
+// 	"https://bonbanh.com/oto/page,7", 
+// 	"https://bonbanh.com/oto/page,8", 
+// 	"https://bonbanh.com/oto/page,9", 
+// 	"https://bonbanh.com/oto/page,10"
+// 	);
 crawl();
 
 function crawl() {
 	var nextPage = pagesToVisit.shift();
 	if (nextPage != null) {
 		visitPage(nextPage);
+	} else {
+		// Crawled all page done
+		// Begin upload images
+		fs.readdir(photoDir, (err, files) => {
+		  files.forEach(fileName => {
+		  	imageForUpload.push(fileName);
+		  });
+		});
+		processUpload();
 	}
 }
 
+function processUpload() {
+	var fileName = imageForUpload.shift();
+	uploadImageToFirebase(photoDir + fileName, fileName);
+}
 
 function visitPage(pageUrl) {
 	console.log("Visiting page " + pageUrl);
@@ -71,31 +86,47 @@ function visitPage(pageUrl) {
 	     // Else is a detail page then collect needed data
 	     if (pageUrl.indexOf("page") > -1) {
 	     	// Crawl all deal url in the page
-	     	collectDetailPageLink($);	
+	     	collectDetailPageLink($);
+	     	setTimeout(crawl, 3000);
 	     } else {
 	     	collectData($);
 	     }
-	     
-	     // crawl next page url
-	     // collectPagingLink($);
-	     setTimeout(crawl, 3000);
 	   }
 	});	
 }
 
 function collectData($) {
+	// Collect data
+	var brand = $(".breadcrum > a > strong")[0].children[0].data;
+	var carType = $("#sgg").find("#mail_parent > .txt_input > span")[2].children[0].data;
+	var dealerName = $(".contact-box").find(".contact-txt > .cname").text();
+	var dealerPhoneNumber = $(".contact-box").find(".contact-txt > .cphone").text();
+	var slogan = $(".car_des > .des_txt").text();
+	var dealName = $(".title").text();
+	var address = $(".contact-txt").text();
+
 	// Collect images
 	var listImages = [];
 	var images = $(".highslide-gallery").find("img");
 	images.each(function (){
 		var imageUrl = $(this).attr('src');
-		var fileName = "./photos/" + imageUrl.substring(imageUrl.lastIndexOf("/") + 1);
-		download(imageUrl, fileName, function(){
-			listImages.push(fileName);
-		});		
+		var fileName = imageUrl.substring(imageUrl.lastIndexOf("/") + 1);
+		listImages.push(createPublicFileURL(fileName));
+		var filePath = "./photos/" + imageUrl.substring(imageUrl.lastIndexOf("/") + 1);
+		download(imageUrl, filePath, function(){});
 	});
-	console.log("List images:");
-	console.log(listImages);
+
+	var object = {id:guid()};
+	object["brand"] = brand;
+	object["carType"] = carType;
+	object["dealerName"] = dealerName;
+	object["dealerPhoneNumber"] = dealerPhoneNumber;
+	object["slogan"] = slogan;
+	object["dealName"] = dealName;
+	object["address"] = address;
+	object["images"] = listImages;
+
+	insertRecord(object);
 }
 
 function collectDetailPageLink($) {
@@ -121,6 +152,8 @@ function collectPagingLink($) {
 }
 
 function uploadImageToFirebase(filePath, uploadTo) {
+	console.log("Uploading: " + filePath);
+	fileMime = mime.getType(filePath);
 	// Upload image
 	bucket.upload(filePath,{
 		destination:uploadTo,
@@ -132,6 +165,7 @@ function uploadImageToFirebase(filePath, uploadTo) {
 		    console.log(err);
 		    return;
 		}
+		processUpload();
 		return createPublicFileURL(uploadTo);
 	});
 }
@@ -146,4 +180,26 @@ function download(uri, filename, callback){
 
 function createPublicFileURL(storageName) {
     return `http://storage.googleapis.com/${bucketName}/${encodeURIComponent(storageName)}`;
+}
+
+function guid() {
+  function s4() {
+    return Math.floor((1 + Math.random()) * 0x10000)
+      .toString(16)
+      .substring(1);
+  }
+  return s4() + s4() + '-' + s4() + '-' + s4() + '-' +
+    s4() + '-' + s4() + s4() + s4();
+}
+
+function insertRecord(object) {
+	console.log("Begin insert object:" + object.id);
+	dealRef.child(object.id).set(object, function(error){
+		if (error) {
+		    console.log("Data could not be saved." + error);
+		  } else {
+		    console.log("Data saved successfully.");
+		    setTimeout(crawl, 3000);
+		  }
+	});
 }
